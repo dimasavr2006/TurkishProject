@@ -9,8 +9,6 @@ from visualize import visualize_pbm_results
 from pbm_solver import generate_pbm_solution, gaussian_initial_condition
 from scipy.stats import qmc
 
-torch.backends.cudnn.benchmark = True
-
 def process_data(args, pbm_tasks_params):
     VT_star_list, N_star_list = [], []
     VT_ic_train_list, N_ic_train_list = [], []
