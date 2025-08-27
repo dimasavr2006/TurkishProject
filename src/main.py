@@ -6,10 +6,12 @@ from utils import *
 from incremental_learning import incremental_learning
 from ipinn import iPINN
 from visualize import visualize_pbm_results
-from pbm_solver import generate_pbm_solution, gaussian_initial_condition
+from pbm_solver import *
 from scipy.stats import qmc
 
-def process_data(args, pbm_tasks_params):
+torch.backends.cudnn.benchmark = True
+
+def process_data(args, pbm_tasks_params, initial_condition_func):
     VT_star_list, N_star_list = [], []
     VT_ic_train_list, N_ic_train_list = [], []
     VT_f_train_list = []
@@ -25,7 +27,7 @@ def process_data(args, pbm_tasks_params):
             pbm_params=params,
             v_domain=v_domain, num_v=args.xgrid,
             t_domain=t_domain, num_t=args.nt,
-            initial_condition_func=gaussian_initial_condition,
+            initial_condition_func=initial_condition_func,
             device='cpu'
         )
 
@@ -63,9 +65,11 @@ def main():
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate.')
 
     parser.add_argument('--num_epochs_train', type=int, default=3000, help='Number of epochs for initial training.')
-    parser.add_argument('--num_epochs_retrain', type=int, default=2000, help='Number of epochs for retraining after pruning.')
+    parser.add_argument('--num_epochs_retrain', type=int, default=2000,
+                        help='Number of epochs for retraining after pruning.')
 
-    parser.add_argument('--layers', type=str, default='40,40,40,40,40,40,40,40', help='Comma-separated list of neuron counts for hidden layers.')
+    parser.add_argument('--layers', type=str, default='40,40,40,40,40,40,40,40',
+                        help='Comma-separated list of neuron counts for hidden layers.')
 
     parser.add_argument('--ic_mus', type=str, default="2.0", help='Comma-separated means for initial conditions.')
     parser.add_argument('--ic_sigmas', type=str, default="0.5", help='Comma-separated stds for initial conditions.')
@@ -89,6 +93,9 @@ def main():
 
     parser.add_argument('--lbfgs_max_iter', type=int, default=5000, help='Max iterations for L-BFGS optimizer.')
 
+    parser.add_argument('--task_type', type=str, default='aggregation', help='Type of PBM task: "aggregation", "breakage", or "combined".')
+    parser.add_argument('--ic_type', type=str, default='gaussian', help='Initial condition type: "gaussian", "chen_agg", "chen_break".')
+
     args = parser.parse_args()
 
 
@@ -109,12 +116,35 @@ def main():
     pbm_tasks_params = []
     for i in range(args.num_tasks):
         params = {'ic_mu': mus[i], 'ic_sigma': sigmas[i]}
+
+        if args.task_type == 'aggregation':
+            params['disable_breakage'] = True
+            params['disable_aggregation'] = False
+        elif args.task_type == 'breakage':
+            params['disable_aggregation'] = True
+            params['disable_breakage'] = False
+        elif args.task_type == 'combined':
+            params['disable_aggregation'] = False
+            params['disable_breakage'] = False
+        else:
+            raise ValueError(f"Unknown task_type: {args.task_type}")
+
         pbm_tasks_params.append(params)
 
-    print(f"Running {len(pbm_tasks_params)} tasks with a fixed PBM kernel...")
+        if args.ic_type == 'chen_agg':
+            selected_ic_func = chen_aggregation_initial_condition
+            print("--- Using Chen's Aggregation Initial Condition ---")
+        elif args.ic_type == 'chen_break':
+            selected_ic_func = dirac_delta_initial_condition
+            print("--- Using Chen's Breakage (Dirac Approx) Initial Condition ---")
+        else:
+            selected_ic_func = gaussian_initial_condition
+            print("--- Using Gaussian Initial Condition ---")
+
+    print(f"Running {len(pbm_tasks_params)} tasks with type: {args.task_type}")
 
     set_seed(args.seed)
-    VT_star, N_star, VT_ic_train, N_ic_train, VT_f_train = process_data(args, pbm_tasks_params)
+    VT_star, N_star, VT_ic_train, N_ic_train, VT_f_train = process_data(args, pbm_tasks_params, initial_condition_func=selected_ic_func)
 
     layers = [int(item) for item in args.layers.split(',')]
     layers.insert(0, 2)
@@ -131,7 +161,8 @@ def main():
         net=args.net,
         num_epochs=None,
         activation=args.activation,
-        loss_style=args.loss_style
+        loss_style=args.loss_style,
+        initial_condition_func=selected_ic_func
     )
     print("DNN architecture:")
     print(model.dnn)
@@ -144,7 +175,7 @@ def main():
     validate(model, VT_star, N_star)
 
     if args.visualize:
-        visualize_pbm_results(model, args, pbm_tasks_params, VT_star, N_star, loss_histories=loss_histories)
+        visualize_pbm_results(model, args, pbm_tasks_params, VT_star, N_star, loss_histories=loss_histories, current_task_id=args.num_tasks - 1)
 
 
 if __name__ == "__main__":

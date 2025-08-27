@@ -19,8 +19,6 @@ def set_seed(seed):
     return    
 
 def sample_random(X_all, N, seed):
-    """Given an array of (x,t) points, sample N points from this."""
-    #set_seed(seed) # this can be fixed for all N_f
 
     idx = np.random.choice(X_all.shape[0], N, replace=False)
     X_sampled = X_all[idx, :]

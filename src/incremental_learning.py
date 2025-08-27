@@ -12,7 +12,8 @@ else:
     device = torch.device('cpu')
 
 
-def incremental_learning(args, model, VT_star, N_star, VT_ic_train, N_ic_train, VT_f_train, _, __, num_tasks, alpha_fc, device):
+def incremental_learning(args, model, VT_star, N_star, VT_ic_train, N_ic_train, VT_f_train, _, __, num_tasks, alpha_fc,
+                         device):
     all_loss_histories = {}
 
     for task_id in range(num_tasks):
@@ -22,6 +23,7 @@ def incremental_learning(args, model, VT_star, N_star, VT_ic_train, N_ic_train, 
         model.dnn.set_trainable_masks(task_id)
 
         print("\n--- STAGE 1: Initial Training ---")
+
         optimizer_adam1 = choose_optimizer("Adam", model.dnn.parameters(), args.lr, weight_decay=args.weight_decay)
 
         lh_adam1 = model.train(optimizer=optimizer_adam1, num_epochs=args.num_epochs_train)

@@ -2,30 +2,36 @@ import torch
 import numpy as np
 
 def aggregation_kernel(v: torch.Tensor, v_prime: torch.Tensor, params: dict) -> torch.Tensor:
-    beta_0 = 1.0
+    if params.get('disable_aggregation', False):
+        return torch.zeros_like(v.view(-1, 1) + v_prime.view(1, -1))
+
+    beta_0 = params.get('beta_0', 1.0)
     v_b = v.view(-1, 1)
     v_prime_b = v_prime.view(1, -1)
     return beta_0 * torch.ones_like(v_b + v_prime_b)
 
 
 def breakage_rate_kernel(v: torch.Tensor, params: dict) -> torch.Tensor:
-    return v ** 2
+    if params.get('disable_breakage', False):
+        return torch.zeros_like(v)
+
+    gamma_0 = params.get('gamma_0', 1.0)
+    power = params.get('breakage_power', 2.0)
+    return gamma_0 * (v ** power)
 
 
 def daughter_distribution_kernel(v: torch.Tensor, v_prime: torch.Tensor, params: dict) -> torch.Tensor:
-    v_b = v.view(-1, 1)
-    v_prime_b = v_prime.view(1, -1)
+    if params.get('disable_breakage', False):
+        return torch.zeros(v.view(-1, 1).shape[0], v_prime.view(1, -1).shape[1], device=v.device)
 
-    result = 2.0 / (v_prime_b + 1e-9)
-    result = result.expand(v_b.shape[0], -1)
+    result = 2.0 / (v_prime.view(1, -1) + 1e-9)
+    result = result.expand(v.view(-1, 1).shape[0], -1)
 
-    mask = v_b > v_prime_b
-
+    mask = v.view(-1, 1) > v_prime.view(1, -1)
     result = result.clone()
     result[mask] = 0.0
 
     return result
-
 
 def generate_pbm_solution(pbm_params: dict,
                           v_domain=(0.0, 10.0), num_v=256,
@@ -54,13 +60,8 @@ def generate_pbm_solution(pbm_params: dict,
     for i in range(num_t - 1):
         N_current = N_solution[i, :]
 
-        integrand_conv = (N_current * dv).unsqueeze(0).unsqueeze(0)
-        conv_output = torch.nn.functional.conv1d(
-            integrand_conv, integrand_conv, padding='same'
-        ).squeeze(0).squeeze(0) * dv
-        agg_birth_term = 0.5 * conv_output
-        integral_agg_death = torch.matmul(B_matrix, N_current)
-        agg_death_term = -N_current * integral_agg_death
+        agg_birth_term = 0.5 * torch.nn.functional.conv1d(N_current.unsqueeze(0).unsqueeze(0), N_current.unsqueeze(0).unsqueeze(0), padding='same').squeeze(0).squeeze(0) * dv * (1-float(pbm_params.get('disable_aggregation', False)))
+        agg_death_term = -N_current * torch.matmul(B_matrix, N_current)
 
         break_death_term = -gamma_on_grid * N_current
         break_birth_term = torch.matmul(A_matrix, N_current)
@@ -70,8 +71,22 @@ def generate_pbm_solution(pbm_params: dict,
 
     return v_grid, t_grid, N_solution
 
-
 def gaussian_initial_condition(v: torch.Tensor, params: dict) -> torch.Tensor:
     mu = params.get('ic_mu', 2.0)
     sigma = params.get('ic_sigma', 0.5)
+    return torch.exp(-((v - mu) ** 2) / (2 * sigma ** 2))
+
+
+def chen_aggregation_initial_condition(v: torch.Tensor, params: dict) -> torch.Tensor:
+    v0 = params.get('ic_mu', 2.0)
+    N0 = params.get('ic_N0', 1.0)
+    v0 = v0 + 1e-9
+
+    return (N0 / v0) * (v / v0) * torch.exp(-v / v0)
+
+
+def dirac_delta_initial_condition(v: torch.Tensor, params: dict) -> torch.Tensor:
+    mu = params.get('ic_mu', 1.0)
+    sigma = params.get('ic_sigma_approx', 0.05)
+
     return torch.exp(-((v - mu) ** 2) / (2 * sigma ** 2))

@@ -1,11 +1,14 @@
+import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from collections import OrderedDict
+import numpy as np
 import copy
 
+from torch.autograd import Variable
 
 from choose_optimizer import *
-from pbm_solver import aggregation_kernel, breakage_rate_kernel, daughter_distribution_kernel
+from pbm_solver import *
 
 if torch.cuda.is_available():
     device = torch.device('cuda')
@@ -24,7 +27,6 @@ class DNN(torch.nn.Module):
     def __init__(self, layers, activation, num_inputs=2, num_outputs=1, use_batch_norm=False, use_instance_norm=False):
         super(DNN, self).__init__()
 
-        # parameters
         self.depth = len(layers) - 1
 
         if activation == 'identity':
@@ -52,6 +54,7 @@ class DNN(torch.nn.Module):
                 layer_list.append(('batchnorm_%d' % i, torch.nn.BatchNorm1d(num_features=layers[i + 1])))
             if self.use_instance_norm:
                 layer_list.append(('instancenorm_%d' % i, torch.nn.InstanceNorm1d(num_features=layers[i + 1])))
+
 
         layer_list.append(
             ('layer_%d' % (self.depth - 1), torch.nn.Linear(layers[-2], layers[-1]))
@@ -163,7 +166,7 @@ class DNN(torch.nn.Module):
 class iPINN():
     def __init__(self, args, pbm_tasks_params, VT_ic_train, N_ic_train, VT_f_train, layers,
                  optimizer_name, lr, weight_decay, net, num_epochs=1000,
-                 activation='tanh', loss_style='mean'):
+                 activation='tanh', loss_style='mean', initial_condition_func=None):
 
         self.args = args
         self.pbm_params = pbm_tasks_params
@@ -177,14 +180,20 @@ class iPINN():
         else:
             self.dnn = torch.load(net).dnn
 
-        v_min = self.args.v_min
-        v_max = self.args.v_max
         num_v_quad = self.args.num_v_quad
 
         self.num_v_quad = num_v_quad
 
-        self.v_quad = torch.linspace(v_min, v_max, num_v_quad, device=device)
+        self.v_quad = torch.linspace(args.v_min, args.v_max, num_v_quad, device=device)
         self.dv = self.v_quad[1] - self.v_quad[0]
+
+        self.v_min = self.args.v_min
+        self.v_max = self.args.v_max
+        self.t_min = self.args.a
+        self.t_max = self.args.b
+
+        self.lb = torch.tensor([self.v_min, self.t_min], device=device).float().view(1, 2)
+        self.ub = torch.tensor([self.v_max, self.t_max], device=device).float().view(1, 2)
 
         self.lr = lr
         self.weight_decay = weight_decay
@@ -194,14 +203,17 @@ class iPINN():
         self.experiment_name = f"PBM_{args.activation}_alpha{args.alpha_fc}_wd{args.weight_decay}_{args.num_tasks}tasks_seed{args.seed}"
         self.num_learned = 0
 
+
         if optimizer_name == "Adam":
             self.optimizer = choose_optimizer(self.optimizer_name, self.dnn.parameters(), self.lr, (0.9, 0.999), 1e-08, weight_decay, False)
-            self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=2000, gamma=0.1)
+            self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.9999)
         else:
             self.optimizer = choose_optimizer(self.optimizer_name, self.dnn.parameters(), self.lr)
 
         self.loss_style = loss_style
         self.iter = 0
+
+        self.initial_condition_func = initial_condition_func if initial_condition_func is not None else gaussian_initial_condition
 
     def set_data(self, VT_ic_train, N_ic_train, VT_f_train):
         self.v_ic, self.t_ic, self.N_ic = [], [], []
@@ -216,7 +228,13 @@ class iPINN():
             self.t_f.append(torch.tensor(VT_f_train[task_id][:, 1:2], requires_grad=True).float().to(device))
 
     def net_u(self, v, t):
-        N_pred = self.dnn(torch.cat([v, t], dim=1))
+        X = torch.cat([v, t], dim=1)
+        X_normalized = 2.0 * (X - self.lb) / (self.ub - self.lb) - 1.0
+        nn_output = self.dnn(X_normalized)
+
+        initial_condition = self.initial_condition_func(v, self.current_pbm_params)
+
+        N_pred = initial_condition + t * nn_output
         return N_pred
 
     def _interpolate_on_grid(self, values_on_grid, query_points_v):
@@ -328,6 +346,33 @@ class iPINN():
         else:
             return sum(loss_list)
 
+    def train_step(self, verbose=True):
+
+        if torch.is_grad_enabled():
+            self.optimizer.zero_grad()
+
+        loss, loss_u_t0, loss_b, loss_f = self.loss_pinn()
+
+        grad_norm = 0
+        for p in self.dnn.parameters():
+            param_norm = p.grad.detach().data.norm(2)
+            grad_norm += param_norm.item() ** 2
+        grad_norm = grad_norm ** 0.5
+
+        if verbose:
+            if self.iter % 100 == 0:
+                print(
+                    'epoch %d, gradient: %.5e, loss: %.5e, loss_u0: %.5e, loss_b: %.5e, loss_f: %.5e' % (self.iter,
+                                                                                                         grad_norm,
+                                                                                                         loss.sum().item(),
+                                                                                                         loss_u_t0.sum().item(),
+                                                                                                         loss_b.sum().item(),
+                                                                                                         loss_f.sum().item())
+                )
+            self.iter += 1
+
+        return loss.sum().item()
+
     def train(self, optimizer, num_epochs):
         self.dnn.train()
         old_params = copy.deepcopy(self.dnn.parameters)
@@ -388,11 +433,7 @@ class iPINN():
         return loss_history
 
     def loss_pinn_one_task(self, task_id):
-        N_pred_ic = self.net_u(self.v_ic[task_id], self.t_ic[task_id])
-        if self.loss_style == 'mean':
-            loss_ic = F.mse_loss(N_pred_ic, self.N_ic[task_id])
-        else:
-            loss_ic = torch.sum((self.N_ic[task_id] - N_pred_ic) ** 2)
+        loss_ic = torch.tensor(0.0).to(device)
 
         v_f_full = self.v_f[task_id]
         t_f_full = self.t_f[task_id]
@@ -411,17 +452,15 @@ class iPINN():
 
             residual_pred_batch = self.calculate_pbm_residual(v_f_batch, t_f_batch)
 
-            if self.loss_style == 'mean':
-                loss_f_total += F.mse_loss(residual_pred_batch, torch.zeros_like(residual_pred_batch), reduction='sum')
-            else:
-                loss_f_total += torch.sum(residual_pred_batch ** 2)
+            squared_error = residual_pred_batch ** 2
+            loss_f_total += torch.sum(squared_error)
 
         if self.loss_style == 'mean':
             loss_f = loss_f_total / num_f_points
         else:
             loss_f = loss_f_total
 
-        loss = loss_ic + loss_f
+        loss = loss_f
 
         return loss, loss_ic, torch.tensor(0.0), loss_f
 
