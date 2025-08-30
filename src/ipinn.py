@@ -16,7 +16,7 @@ else:
     device = torch.device('cpu')
 
 
-def init_weights(m):
+def init_weights(m): # просто инициализация весов
     classname = m.__class__.__name__
     if isinstance(m, nn.Linear):
         nn.init.xavier_uniform_(m.weight)
@@ -24,10 +24,13 @@ def init_weights(m):
 
 
 class DNN(torch.nn.Module):
+    # это нейронка адаптированная к инкрементальному обучению с помощью масок
     def __init__(self, layers, activation, num_inputs=2, num_outputs=1, use_batch_norm=False, use_instance_norm=False):
         super(DNN, self).__init__()
 
         self.depth = len(layers) - 1
+
+        # выбор функции активации
 
         if activation == 'identity':
             self.activation = torch.nn.Identity()
@@ -41,6 +44,7 @@ class DNN(torch.nn.Module):
             self.activation = torch.nn.functional.gelu
         elif activation == 'sin':
             self.activation = torch.sin
+
         self.use_batch_norm = use_batch_norm
         self.use_instance_norm = use_instance_norm
 
@@ -61,7 +65,7 @@ class DNN(torch.nn.Module):
         )
         layerDict = OrderedDict(layer_list)
 
-        self.layers = torch.nn.Sequential(layerDict)
+        self.layers = torch.nn.Sequential(layerDict) # вот мы сделали архитектуру сети
 
         self.num_inputs = num_inputs
         self.num_outputs = num_outputs
@@ -72,12 +76,15 @@ class DNN(torch.nn.Module):
         self.tasks_masks = []
         self.add_mask(task_id=0, num_inputs=num_inputs)
 
+        # тут маски и всё остальное
+
         self.trainable_mask = copy.deepcopy(self.tasks_masks[0])
         self.masks_union = copy.deepcopy(self.tasks_masks[0])
         self.masks_intersection = copy.deepcopy(self.tasks_masks[0])
 
         self.apply(init_weights)
 
+    # ну тут название
     def _create_masks(self, layers, num_inputs=2):
         print(layers)
         masks = [torch.ones(layers[1], layers[0]), torch.ones(layers[1])]
@@ -91,6 +98,7 @@ class DNN(torch.nn.Module):
 
         return masks
 
+    # сделано для того чтобы маски были независимы
     def add_mask(self, task_id, num_inputs=2, num_outputs=1):
         self.num_tasks += 1
         self.tasks_masks.append(copy.deepcopy(self.base_masks))
@@ -110,6 +118,7 @@ class DNN(torch.nn.Module):
 
         return total_number_fc.item()
 
+    # объединяет все маски с помощью логического или
     def set_masks_union(self):
         self.masks_union = copy.deepcopy(self.tasks_masks[0])
         for id in range(1, self.num_tasks):
@@ -117,6 +126,14 @@ class DNN(torch.nn.Module):
                 self.masks_union[l] = copy.deepcopy(1 * torch.logical_or(self.masks_union[l], self.tasks_masks[id][l]))
 
     def set_trainable_masks(self, task_id):
+
+        """
+        Определяет, какие веса можно обновлять.
+        Для первой задачи (task_id = 0) можно обучать все веса.
+        Для последующих задач, обучаемыми становятся веса, которые важны для текущей задачи (self.tasks_masks[task_id]) ИЛИ были важны для любой из предыдущих (self.masks_union).
+         Это позволяет дообучать "старые" веса, если они нужны для новой задачи, и защищает веса, специфичные только для старых задач, от затирания
+        """
+
         if task_id > 0:
             for l in range(len(self.trainable_mask)):
                 self.trainable_mask[l] = copy.deepcopy(1 * ((self.tasks_masks[task_id][l] + self.masks_union[l]) > 0))
@@ -127,9 +144,10 @@ class DNN(torch.nn.Module):
         u = x
 
         for l, layer in enumerate(list(self.layers.children())[0:-1]):
-            active_weights = layer.weight * self.tasks_masks[self.task_id][2 * l].to(device)
+            # Выбирается маска для активной задачи
+            active_weights = layer.weight * self.tasks_masks[self.task_id][2 * l].to(device) # поэлементное умножение
             active_bias = layer.bias * self.tasks_masks[self.task_id][2 * l + 1].to(device)
-            u = F.linear(u, weight=active_weights, bias=active_bias)
+            u = F.linear(u, weight=active_weights, bias=active_bias) # линейное преобразование
             u = self.activation(u)
 
         layer = list(self.layers.children())[-1]
@@ -167,6 +185,8 @@ class iPINN():
     def __init__(self, args, pbm_tasks_params, VT_ic_train, N_ic_train, VT_f_train, layers,
                  optimizer_name, lr, weight_decay, net, num_epochs=1000,
                  activation='tanh', loss_style='mean', initial_condition_func=None):
+
+        # конструктор
 
         self.args = args
         self.pbm_params = pbm_tasks_params
@@ -216,6 +236,7 @@ class iPINN():
         self.initial_condition_func = initial_condition_func if initial_condition_func is not None else gaussian_initial_condition
 
     def set_data(self, VT_ic_train, N_ic_train, VT_f_train):
+        # преобразует входные нампай массивы в тензоры пайторча и сохраняет их в списках разделяя по задачам
         self.v_ic, self.t_ic, self.N_ic = [], [], []
         self.v_f, self.t_f = [], []
 
@@ -228,16 +249,30 @@ class iPINN():
             self.t_f.append(torch.tensor(VT_f_train[task_id][:, 1:2], requires_grad=True).float().to(device))
 
     def net_u(self, v, t):
+        # функция которая преобразует входные предсказания
+
         X = torch.cat([v, t], dim=1)
-        X_normalized = 2.0 * (X - self.lb) / (self.ub - self.lb) - 1.0
-        nn_output = self.dnn(X_normalized)
+        X_normalized = 2.0 * (X - self.lb) / (self.ub - self.lb) - 1.0 # входные данные которые нормализуются к промежутку от -1 до 1
+
+        C = 10.0
+        nn_output = C * torch.tanh(self.dnn(X_normalized)) # трюк аналогичный статье чена который фиксирует потерю на начальных условиях
 
         initial_condition = self.initial_condition_func(v, self.current_pbm_params)
+        initial_condition_log = torch.log(initial_condition + 1e-8)
 
-        N_pred = initial_condition + t * nn_output
+        log_N_pred = initial_condition_log + t * nn_output
+        N_pred = torch.exp(log_N_pred)
+
         return N_pred
 
     def _interpolate_on_grid(self, values_on_grid, query_points_v):
+
+        """
+        Для вычисления интегралов (например, свёртки в члене агрегации) решение N вычисляется на фиксированной сетке v_quad.
+        Но невязка (residual) должна быть посчитана в произвольных коллокационных точках v_f.
+        Эта функция позволяет получить значения с фиксированной сетки в этих произвольных точках
+        """
+
         v_q = self.v_quad
         dv = self.dv
 
@@ -264,18 +299,30 @@ class iPINN():
         return interpolated_values.unsqueeze(1)
 
     def calculate_pbm_residual(self, v_f, t_f):
+
+        # считает как раз таки невязку
+
+
         N_pred = self.net_u(v_f, t_f)
+
         dN_dt = torch.autograd.grad(
             N_pred, t_f,
             grad_outputs=torch.ones_like(N_pred),
             retain_graph=True, create_graph=True
         )[0]
 
+        """
+        Частная производная по времени ∂N/∂t вычисляется автоматически с помощью torch.autograd.grad. 
+        Это и есть "магия" фреймворков с автоматическим дифференцированием, на которой строятся PINN
+        """
+
         N_f = v_f.shape[0]
 
         v_grid_bc, t_grid_bc = torch.meshgrid(self.v_quad, t_f.squeeze(-1), indexing='ij')
-        N_on_grid = self.net_u(v_grid_bc.reshape(-1, 1), t_grid_bc.reshape(-1, 1)).view(self.v_quad.shape[0], N_f).T
+        N_on_grid = self.net_u(v_grid_bc.reshape(-1, 1), t_grid_bc.reshape(-1, 1)).view(self.v_quad.shape[0], N_f).T # Здесь решение вычисляется на сетке интегрирования v_quad для каждого момента времени t из t_f
 
+
+        # вычисление всех членов уравнения, мы это обсуждали ранее
         kernel_agg_vals = aggregation_kernel(v_f, self.v_quad, self.current_pbm_params)
         integral_agg_death = torch.trapezoid(kernel_agg_vals * N_on_grid, self.v_quad, dim=1)
         term_agg_death = -N_pred * integral_agg_death.unsqueeze(1)
@@ -295,6 +342,13 @@ class iPINN():
         integrand_break_birth = kernel_daughter_vals * gamma_on_grid.unsqueeze(0) * N_on_grid
         term_break_birth = torch.trapezoid(integrand_break_birth, self.v_quad, dim=1).unsqueeze(1)
 
+        """
+        Каждый физический процесс (рождение/смерть частиц из-за агрегации и дробления) представлен в виде члена уравнения.
+        Интегралы вычисляются численно методом трапеций (torch.trapezoid).
+        Интеграл свёртки в term_agg_birth хитро реализован через F.conv1d — это очень эффективный способ.
+        residual: Это и есть невязка. Если бы N_pred было точным решением, residual был бы равен нулю. Цель обучения — минимизировать квадрат этой невязки
+        """
+
         residual = dN_dt - (term_agg_birth + term_break_birth) - (term_agg_death + term_break_death)
         return residual
 
@@ -304,6 +358,9 @@ class iPINN():
         return
 
     def rewrite_parameters(self, old_params):
+
+        # эта функция вызывается после шага оптимизатора, чтобы "откатить" изменения в тех весах, которые не должны были меняться
+
         l = 0
         for param, old_param in zip(self.dnn.parameters(), old_params()):
             param.data = param.data * self.dnn.trainable_mask[l].to(device) + old_param.data * (
@@ -320,24 +377,27 @@ class iPINN():
         for grad in old_grads():
             grad.data = torch.zeros_like(grad)
 
+        # цикл по всем выученным задачам
         for task_id in range(0, self.num_learned):
-            self.set_task(task_id)
+            self.set_task(task_id) # переключение маски на нужную
             loss, loss_u_t0, loss_b, loss_f = self.loss_pinn_one_task(task_id)
             loss_list.append(loss)
             loss_u_t0_list.append(loss_u_t0)
             loss_b_list.append(loss_b)
             loss_f_list.append(loss_f)
+            # ну и рассчитанные потери добавляются в код
 
         for task_id in range(len(loss_list)):
-            loss_list[task_id].backward(retain_graph=True)
+            loss_list[task_id].backward(retain_graph=True) # вычисление градиентов только от потери выбранной задачи
             l = 0
             for param, old_grad in zip(self.dnn.layers.parameters(), old_grads()):
-                param.grad.data = param.grad.data * (self.dnn.tasks_masks[task_id][l]).to(device) + old_grad.data * (
-                        1 - self.dnn.tasks_masks[task_id][l]).to(device)
-                old_grad.data = copy.deepcopy(param.grad.data)
+                param.grad.data = param.grad.data * (self.dnn.tasks_masks[task_id][l]).to(device) + old_grad.data * ( # в потери задачи task_id могут "течь" градиенты только к тем весам, которые активны для этой задачи
+                        1 - self.dnn.tasks_masks[task_id][l]).to(device)  # к "отфильтрованному" градиенту прибавляются градиенты от предыдущих задач, которые хранятся в old_grad
+                old_grad.data = copy.deepcopy(param.grad.data) # old_grad обновляется, чтобы на следующей итерации цикла (для task_id + 1) он содержал сумму градиентов от задач 0 до task_id
                 l += 1
 
         if return_components:
+            # блок для логирования
             loss_tot = torch.tensor([l.item() for l in loss_list])
             loss_u_t0_tot = torch.tensor([l.item() for l in loss_u_t0_list])
             loss_b_tot = torch.tensor([l.item() for l in loss_b_list])
@@ -347,6 +407,7 @@ class iPINN():
             return sum(loss_list)
 
     def train_step(self, verbose=True):
+        # не используется сейчас
 
         if torch.is_grad_enabled():
             self.optimizer.zero_grad()
@@ -375,37 +436,47 @@ class iPINN():
 
     def train(self, optimizer, num_epochs):
         self.dnn.train()
+        # просто подготовки для дальнейших отслеживаний
         old_params = copy.deepcopy(self.dnn.parameters)
         min_loss = np.inf
         loss_history = {'total': [], 'ic': [], 'f': []}
 
         if isinstance(optimizer, torch.optim.Adam):
-            scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=int(num_epochs / 4), gamma=0.5)
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=1000)
             print(f"Starting training with Adam for {num_epochs} epochs...")
+
             for epoch in range(num_epochs):
+
                 def closure():
-                    optimizer.zero_grad()
-                    loss = self.loss_pinn()
-                    loss.backward()
+                    optimizer.zero_grad() # без этого градиенты не будут накапливаться
+                    loss = self.loss_pinn() # вычисляется потеря
+                    loss.backward() # обратное распространенние ошибки
                     return loss
 
                 optimizer.step(closure)
-                scheduler.step()
-                self.rewrite_parameters(old_params)
 
                 if epoch % 100 == 0:
                     total_loss, ic_loss, _, f_loss = self.loss_pinn(return_components=True)
+                    scheduler.step(total_loss) # передаём потери чтобы оптимизатор пытался понять что происходит
+
                     loss_history['total'].append(total_loss.item())
                     loss_history['ic'].append(ic_loss.item())
                     loss_history['f'].append(f_loss.item())
 
-                    if epoch % 100 == 0:
-                        print(
-                            f"Epoch {epoch}: Loss={total_loss.item():.4e}, IC={ic_loss.item():.4e}, F={f_loss.item():.4e}")
+                    print(
+                        f"Epoch {epoch}: Loss={total_loss.item():.4e}, F={f_loss.item():.4e}, LR={optimizer.param_groups[0]['lr']:.2e}")
 
+                    # сохранение лучшей модели
                     if total_loss.item() < min_loss:
                         min_loss = total_loss.item()
                         torch.save(self.dnn.state_dict(), f"model_{self.experiment_name}.pth")
+
+                """
+                Оптимизатор мог обновить все веса, но эта функция "откатывает" изменения для тех весов, которые не являются обучаемыми согласно trainable_mask.
+                 Это гарантирует, что веса, важные для старых задач и не нужные для новой, не будут "затёрты"
+                """
+
+                self.rewrite_parameters(old_params)
 
         elif isinstance(optimizer, torch.optim.LBFGS):
             print(f"Starting training with L-BFGS for max {num_epochs} iterations...")
@@ -429,44 +500,74 @@ class iPINN():
         else:
             raise TypeError("Optimizer not supported")
 
+        # в модел загружаются веса которые дали наименьшую потерю
         self.dnn.load_state_dict(torch.load(f"model_{self.experiment_name}.pth"))
         return loss_history
 
     def loss_pinn_one_task(self, task_id):
+
+        # вычисляет лосс для одной задачи
+
         loss_ic = torch.tensor(0.0).to(device)
 
-        v_f_full = self.v_f[task_id]
-        t_f_full = self.t_f[task_id]
+        v_f = self.v_f[task_id]
+        t_f = self.t_f[task_id]
 
-        num_f_points = v_f_full.shape[0]
-        batch_size = 256
+        residual_pred = self.calculate_pbm_residual(v_f, t_f)
 
-        shuffled_indices = torch.randperm(num_f_points)
-
-        loss_f_total = 0.0
-
-        for i in range(0, num_f_points, batch_size):
-            indices = shuffled_indices[i:i + batch_size]
-            v_f_batch = v_f_full[indices]
-            t_f_batch = t_f_full[indices]
-
-            residual_pred_batch = self.calculate_pbm_residual(v_f_batch, t_f_batch)
-
-            squared_error = residual_pred_batch ** 2
-            loss_f_total += torch.sum(squared_error)
-
-        if self.loss_style == 'mean':
-            loss_f = loss_f_total / num_f_points
-        else:
-            loss_f = loss_f_total
+        loss_f = torch.mean(residual_pred ** 2) # среднеквадратическая ошибка невязки
 
         loss = loss_f
 
-        return loss, loss_ic, torch.tensor(0.0), loss_f
+        return loss, loss_ic, torch.tensor(0.0), loss_f # тут 0 потеря на начальных условиях так как мы её жёстко ограничили
+
+    def _refine_collocation_points(self, task_id):
+        print(f"\n--- RAR: Refining collocation points for task {task_id + 1} ---")
+        self.dnn.eval()
+
+        num_candidates = self.args.rar_candidates
+        # тут логика рар, суть в том что создаются доп точки чтобы потом их проверить, суть в том чтобы найти точки с наибольшей ошибкой и их запихнуть в нашу выборку
+        v_candidates = torch.tensor(
+            np.random.rand(num_candidates, 1) * (self.v_max - self.v_min) + self.v_min,
+            device=device, dtype=torch.float32, requires_grad=True
+        )
+        t_candidates = torch.tensor(
+            np.random.rand(num_candidates, 1) * (self.t_max - self.t_min) + self.t_min,
+            device=device, dtype=torch.float32, requires_grad=True
+        )
+
+        with torch.enable_grad():
+            # тут как раз считаем невязку
+            residuals = self.calculate_pbm_residual(v_candidates, t_candidates)
+
+        with torch.no_grad():
+            # тут просто квадрат невязки
+            squared_residuals = residuals.pow(2)
+
+        num_to_add = self.args.rar_points_to_add
+        top_k_residuals, top_k_indices = torch.topk(squared_residuals.flatten(), num_to_add) # выбор самых плохих
+
+        hard_v_points = v_candidates[top_k_indices]
+        hard_t_points = t_candidates[top_k_indices]
+
+        # присоединение сложных точек к датасету
+        self.v_f[task_id] = torch.cat([self.v_f[task_id], hard_v_points.detach()], dim=0)
+        self.t_f[task_id] = torch.cat([self.t_f[task_id], hard_t_points.detach()], dim=0)
+
+        print(
+            f"--- RAR: Added {num_to_add} new points. Total f-points for task {task_id + 1}: {self.v_f[task_id].shape[0]} ---")
+
+        self.dnn.train()
 
     def predict(self, VT_star):
-        v_star = torch.tensor(VT_star[:, 0:1], requires_grad=True).float().to(device)
+        v_star = torch.tensor(VT_star[:, 0:1], requires_grad=True).float().to(device) # первый столбец v и второй t
         t_star = torch.tensor(VT_star[:, 1:2], requires_grad=True).float().to(device)
+
+        """
+        Мы просто вызываем нашу функцию net_u, которая выполняет весь прямой проход через нейронную сеть, 
+        включая нормализацию входа и применение формулы  
+        n_star — это тензор PyTorch с предсказанными значениями
+        """
 
         self.dnn.eval()
         n_star = self.net_u(v_star, t_star)

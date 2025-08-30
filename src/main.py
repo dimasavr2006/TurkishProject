@@ -12,11 +12,11 @@ from scipy.stats import qmc
 torch.backends.cudnn.benchmark = True
 
 def process_data(args, pbm_tasks_params, initial_condition_func):
-    VT_star_list, N_star_list = [], []
+    VT_star_list, N_star_list = [], [] # эталонные списки для данных для разного числа задач
     VT_ic_train_list, N_ic_train_list = [], []
     VT_f_train_list = []
 
-    v_domain = (args.v_min, args.v_max)
+    v_domain = (args.v_min, args.v_max) # границы расчётной области
     t_domain = (args.a, args.b)
 
     print("--- Generating data for PBM tasks ---")
@@ -29,30 +29,32 @@ def process_data(args, pbm_tasks_params, initial_condition_func):
             t_domain=t_domain, num_t=args.nt,
             initial_condition_func=initial_condition_func,
             device='cpu'
-        )
+        ) # результат: вектор, вектор и матрица
 
-        V_star, T_star = np.meshgrid(v_grid_exact.numpy(), t_grid_exact.numpy())
+        V_star, T_star = np.meshgrid(v_grid_exact.numpy(), t_grid_exact.numpy()) # из двух векторов делаемм сетку
         VT_star = np.hstack((V_star.flatten()[:, None], T_star.flatten()[:, None]))
         N_star = N_exact.numpy().flatten()[:, None]
-        VT_star_list.append(VT_star)
+        VT_star_list.append(VT_star) # готовые данные для выбранной задачи добавляются в списки
         N_star_list.append(N_star)
 
         v_ic = v_grid_exact.numpy()
-        t_ic = np.zeros_like(v_ic)
-        VT_ic_train = np.hstack((v_ic[:, None], t_ic[:, None]))
+        t_ic = np.zeros_like(v_ic) # начальные условия
+
+        VT_ic_train = np.hstack((v_ic[:, None], t_ic[:, None])) # массив координат
         N_ic_train = N_exact.numpy()[0, :].flatten()[:, None]
-        VT_ic_train_list.append(VT_ic_train)
+        VT_ic_train_list.append(VT_ic_train) # добавление массивов в списки
         N_ic_train_list.append(N_ic_train)
 
-        sampler = qmc.LatinHypercube(d=2, seed=args.seed)
+        sampler = qmc.LatinHypercube(d=2, seed=args.seed) # создаём коллокационные точки
         sample = sampler.random(n=args.N_f)
 
         v_f_train = sample[:, 0] * (args.v_max - args.v_min) + args.v_min
-        t_f_train = sample[:, 1] * (args.b - args.a) + args.a
-        t_f_train[0] = args.a
+        t_f_train = sample[:, 1] * (args.b - args.a) + args.a # тут масштабируют данные
+
+        t_f_train[0] = args.a # первая точка по времени принудительно устанавливается
 
         VT_f_train = np.hstack((v_f_train[:, None], t_f_train[:, None]))
-        VT_f_train_list.append(VT_f_train)
+        VT_f_train_list.append(VT_f_train) # массив добавляется в список, ля коллокационных точек нам не нужны значения N, так как именно в этих точках мы будем вычислять невязку residual, которая и есть наша цель для минимизации
 
     return VT_star_list, N_star_list, VT_ic_train_list, N_ic_train_list, VT_f_train_list
 
