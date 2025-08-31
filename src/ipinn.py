@@ -53,6 +53,7 @@ class DNN(torch.nn.Module):
             layer_list.append(
                 ('layer_%d' % i, torch.nn.Linear(layers[i], layers[i + 1]))
             )
+            # тут со слоями работа
 
             if self.use_batch_norm:
                 layer_list.append(('batchnorm_%d' % i, torch.nn.BatchNorm1d(num_features=layers[i + 1])))
@@ -84,7 +85,7 @@ class DNN(torch.nn.Module):
 
         self.apply(init_weights)
 
-    # ну тут название
+    # ну по названию всё понятно
     def _create_masks(self, layers, num_inputs=2):
         print(layers)
         masks = [torch.ones(layers[1], layers[0]), torch.ones(layers[1])]
@@ -140,7 +141,7 @@ class DNN(torch.nn.Module):
         else:
             self.trainable_mask = copy.deepcopy(self.tasks_masks[task_id])
 
-    def forward(self, x):
+    def forward(self, x): # прямой проход с применением масок
         u = x
 
         for l, layer in enumerate(list(self.layers.children())[0:-1]):
@@ -282,11 +283,11 @@ class iPINN():
 
         pos = torch.clamp(pos, 0, self.num_v_quad - 1)
 
-        idx_floor = pos.floor().long()
+        idx_floor = pos.floor().long() # округляет позицию до ближайшего целого
 
         idx_ceil = torch.clamp(idx_floor + 1, 0, self.num_v_quad - 1)
 
-        weight_ceil = (pos - idx_floor).clamp(0, 1)
+        weight_ceil = (pos - idx_floor).clamp(0, 1) # вычисление весов для интерполяции
         weight_floor = 1.0 - weight_ceil
 
         batch_idx = torch.arange(values_on_grid.shape[0], device=values_on_grid.device)
@@ -312,7 +313,7 @@ class iPINN():
         )[0]
 
         """
-        Частная производная по времени ∂N/∂t вычисляется автоматически с помощью torch.autograd.grad. 
+        Частная производная по времени ∂N/∂t вычисляется автоматически с помощью torch.autograd.grad
         Это и есть "магия" фреймворков с автоматическим дифференцированием, на которой строятся PINN
         """
 
@@ -450,7 +451,7 @@ class iPINN():
                 def closure():
                     optimizer.zero_grad() # без этого градиенты не будут накапливаться
                     loss = self.loss_pinn() # вычисляется потеря
-                    loss.backward() # обратное распространенние ошибки
+                    loss.backward() # обратное распространенние ошибки и вычисление градиентов
                     return loss
 
                 optimizer.step(closure)

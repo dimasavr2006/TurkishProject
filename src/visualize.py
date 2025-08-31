@@ -43,6 +43,10 @@ def plot_pbm_combined_heatmaps(N_exact, N_pred, N_diff, task_id, v_grid, t_grid,
 
 
 def plot_pbm_time_slices_subplots(N_data_dict, task_id, v_grid, t_grid, pbm_params, path, save=False):
+
+    v0 = pbm_params.get('ic_mu')
+    v_grid_normalised = v_grid / v0
+
     num_t = len(t_grid)
     time_indices = [0, num_t // 3, 2 * num_t // 3, num_t - 1]
     fig, axes = plt.subplots(1, 4, figsize=(24, 6), sharey=True)
@@ -50,9 +54,18 @@ def plot_pbm_time_slices_subplots(N_data_dict, task_id, v_grid, t_grid, pbm_para
     for i, t_idx in enumerate(time_indices):
         ax = axes[i]
         time_val = t_grid[t_idx]
-        ax.plot(v_grid, N_data_dict['exact'][t_idx, :], 'b-', linewidth=2, label='Exact')
-        ax.plot(v_grid, N_data_dict['predicted'][t_idx, :], 'r--', linewidth=2, label='Predicted')
-        ax.set_xlabel('Particle Volume (v)', fontweight='bold', size=16)
+
+
+        ax.plot(v_grid_normalised, N_data_dict['exact'][t_idx, :], 'b-', linewidth=2, label='Exact solution')
+        ax.plot(v_grid_normalised, N_data_dict['predicted'][t_idx, :], 'r--', linewidth=2, label='PINN prediction')
+        ax.set_xlabel('Normalised volume (v/v0) should be')
+
+
+        # ax.plot(v_grid, N_data_dict['exact'][t_idx, :], 'b-', linewidth=2, label='Exact')
+        # ax.plot(v_grid, N_data_dict['predicted'][t_idx, :], 'r--', linewidth=2, label='Predicted')
+        # ax.set_xlabel('Particle Volume (v)', fontweight='bold', size=16)
+
+
         ax.set_title(f'Time t = {time_val:.2f}', fontsize=18)
         ax.tick_params(labelsize=14)
         ax.legend()
