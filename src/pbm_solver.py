@@ -93,8 +93,8 @@ def gaussian_initial_condition(v: torch.Tensor, params: dict) -> torch.Tensor:
 
 def chen_aggregation_initial_condition(v: torch.Tensor, params: dict) -> torch.Tensor:
     v0 = params.get('ic_mu', 2.0)
-    N0 = params.get('ic_N0', 1.0)
-    # N0 = params.get('ic_N0', 0.125)
+    # N0 = params.get('ic_N0', 1.0)
+    N0 = params.get('ic_N0', 0.25)
     v0 = v0 + 1e-9
 
     return (N0 / v0) * (v / v0) * torch.exp(-v / v0)
