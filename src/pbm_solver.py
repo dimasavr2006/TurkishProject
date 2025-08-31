@@ -10,7 +10,8 @@ def aggregation_kernel(v: torch.Tensor, v_prime: torch.Tensor, params: dict) -> 
     if params.get('disable_aggregation', False):
         return torch.zeros_like(v.view(-1, 1) + v_prime.view(1, -1))
 
-    beta_0 = params.get('beta_0', 1.0) # константа скорости агрегации
+    # beta_0 = params.get('beta_0', 1.0) # константа скорости агрегации
+    beta_0 = params.get('beta_0', 4.0)
     v_b = v.view(-1, 1)
     v_prime_b = v_prime.view(1, -1)
     return beta_0 * torch.ones_like(v_b + v_prime_b)
