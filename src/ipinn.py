@@ -333,7 +333,9 @@ class iPINN():
         kernel = (N_on_grid * self.dv).unsqueeze(1)
         conv_output = F.conv1d(inp, kernel, padding='same', groups=batch_size).squeeze(0)
         agg_birth_interpolated = self._interpolate_on_grid(conv_output, v_f)
-        term_agg_birth = 0.5 * agg_birth_interpolated
+
+        # term_agg_birth = 0.5 * agg_birth_interpolated
+        term_agg_birth = 0.5 * agg_birth_interpolated * (1.0 - float(self.current_pbm_params.get('disable_aggregation', False)))
 
         gamma_vals = breakage_rate_kernel(v_f, self.current_pbm_params)
         term_break_death = -gamma_vals * N_pred
