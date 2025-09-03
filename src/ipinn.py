@@ -254,11 +254,13 @@ class iPINN():
         X_normalized = 2.0 * (X - self.lb) / (self.ub - self.lb) - 1.0
 
         initial_condition = self.initial_condition_func(v, self.current_pbm_params)
+
         nn_output = self.dnn(X_normalized)
 
-        N_pred = initial_condition + t * nn_output
+        sqrt_ic = torch.sqrt(F.relu(initial_condition) + 1e-9)
+        N_pred = (sqrt_ic + t * nn_output) ** 2
 
-        return F.softplus(N_pred)
+        return N_pred
 
     def _interpolate_on_grid(self, values_on_grid, query_points_v):
 
