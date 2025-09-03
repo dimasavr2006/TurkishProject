@@ -250,21 +250,15 @@ class iPINN():
             self.t_f.append(torch.tensor(VT_f_train[task_id][:, 1:2], requires_grad=True).float().to(device))
 
     def net_u(self, v, t):
-        # функция которая преобразует входные предсказания
-
         X = torch.cat([v, t], dim=1)
-        X_normalized = 2.0 * (X - self.lb) / (self.ub - self.lb) - 1.0 # входные данные которые нормализуются к промежутку от -1 до 1
-
-        C = 10.0
-        nn_output = C * torch.tanh(self.dnn(X_normalized)) # трюк аналогичный статье чена который фиксирует потерю на начальных условиях
+        X_normalized = 2.0 * (X - self.lb) / (self.ub - self.lb) - 1.0
 
         initial_condition = self.initial_condition_func(v, self.current_pbm_params)
-        initial_condition_log = torch.log(initial_condition + 1e-8)
+        nn_output = self.dnn(X_normalized)
 
-        log_N_pred = initial_condition_log + t * nn_output
-        N_pred = torch.exp(log_N_pred)
+        N_pred = initial_condition + t * nn_output
 
-        return N_pred
+        return F.softplus(N_pred)
 
     def _interpolate_on_grid(self, values_on_grid, query_points_v):
 
