@@ -103,7 +103,7 @@ python src/main.py --task_type breakage `
 
 ---
 
-## 📋 Command-Line Arguments
+## Command-Line Arguments
 
 The behavior of the simulation can be controlled with the following arguments:
 
@@ -132,7 +132,7 @@ The behavior of the simulation can be controlled with the following arguments:
 
 ---
 
-## 📊 Expected Output
+## Expected Output
 
 When the script is run with `--visualize True`, it will generate and save several plots in a directory named `pbm_results/`. The results are organized by experiment name and task number.
 
@@ -154,7 +154,7 @@ Additionally, model checkpoints (`.pth`) and mask files (`.pt`) are saved in the
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 ├── src/
