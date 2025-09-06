@@ -19,8 +19,8 @@ Follow these steps to set up the project environment. A virtual environment is h
 
 1.  **Clone the repository:**
     ```powershell
-    git clone https://github.com/dimasavr2006/TurkishProject.git
-    cd TurkishProject
+    git clone https://github.com/dimasavr2006/iPINN-PBMs.git
+    cd iPINN-PBMs
     ```
 
 2.  **Create and activate a virtual environment:**
