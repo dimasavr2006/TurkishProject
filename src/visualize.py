@@ -58,7 +58,7 @@ def plot_pbm_time_slices_subplots(N_data_dict, task_id, v_grid, t_grid, pbm_para
 
         ax.plot(v_grid_normalised, N_data_dict['exact'][t_idx, :], 'b-', linewidth=2, label='Exact solution')
         ax.plot(v_grid_normalised, N_data_dict['predicted'][t_idx, :], 'r--', linewidth=2, label='PINN prediction')
-        ax.set_xlabel('Normalised volume (v/v0) should be')
+        ax.set_xlabel('Normalised volume (v/v0)')
 
 
         # ax.plot(v_grid, N_data_dict['exact'][t_idx, :], 'b-', linewidth=2, label='Exact')
@@ -75,7 +75,7 @@ def plot_pbm_time_slices_subplots(N_data_dict, task_id, v_grid, t_grid, pbm_para
 
     ic_mu = pbm_params.get('ic_mu', 'N/A')
     ic_sigma = pbm_params.get('ic_sigma', 'N/A')
-    fig.suptitle(f"Time Slices Comparison\nTask {task_id + 1}: IC μ={ic_mu}, σ={ic_sigma}", fontsize=22, y=1.04)
+    fig.suptitle(f"Time Slices Comparison\nTask {task_id + 1}: IC μ={ic_mu}, σ={ic_sigma}", fontsize=18, y=1.04)
     plt.tight_layout()
 
     if save:
@@ -96,7 +96,7 @@ def plot_loss_history(loss_histories, path, experiment_name, save=False):
     for i, loss_type in enumerate(loss_types):
         ax = axes[i]
         for task_id, history in loss_histories.items():
-            steps = np.arange(len(history[loss_type])) * 100
+            steps = np.arange(len(history[loss_type])) * 50
             ax.plot(steps, history[loss_type], label=f'Task {task_id + 1}')
 
         ax.set_ylabel('Loss Value', fontweight='bold', size=16)

@@ -454,20 +454,21 @@ class iPINN():
 
                 optimizer.step(closure)
 
-                if epoch % 100 == 0:
+                if epoch % 50 == 0:
                     total_loss, ic_loss, _, f_loss = self.loss_pinn(return_components=True)
-                    scheduler.step(total_loss) # передаём потери чтобы оптимизатор пытался понять что происходит
 
                     loss_history['total'].append(total_loss.item())
                     loss_history['ic'].append(ic_loss.item())
                     loss_history['f'].append(f_loss.item())
 
-                    print(
-                        f"Epoch {epoch}: Loss={total_loss.item():.4e}, F={f_loss.item():.4e}, LR={optimizer.param_groups[0]['lr']:.2e}")
+                    if epoch % 100 == 0:
+                        scheduler.step(total_loss)
+                        print(f"Epoch {epoch}: Loss={total_loss.item():.4e}, F={f_loss.item():.4e}, LR={optimizer.param_groups[0]['lr']:.2e}")
 
-                    # сохранение лучшей модели
-                    if total_loss.item() < min_loss:
-                        min_loss = total_loss.item()
+                if epoch % 100 == 0:
+                    current_loss_val = self.loss_pinn(return_components=True)[0].item()
+                    if current_loss_val < min_loss:
+                        min_loss = current_loss_val
                         torch.save(self.dnn.state_dict(), f"model_{self.experiment_name}.pth")
 
                 """
